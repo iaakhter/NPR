@@ -1,0 +1,631 @@
+<!--Itrat Ahmed Akhter. NPR effects.
+Please read the readme file for more information-->
+
+<!DOCTYPE html>
+<html>
+<head lang="en">
+    <meta charset="UTF-8">
+    <title> NPR Scene </title>
+
+    <!--CSS-->
+    <style>
+        #container{
+            /*background: #1f2058;*/
+            /*width: 800px;*/
+            /*height: 800px;*/
+        }
+
+        #popup {
+
+        }
+
+    </style>
+    
+    <!-- Local Scripts-->
+    <script type="text/javascript" src="js/three.js"></script>
+    <script type="text/javascript" src="js/jquery.js"></script>
+    <script type="text/javascript" src="js/dat.gui.js"></script>
+    <script type="text/javascript" src="js/ccv.js"></script>
+    <a href="#" onclick="performClick('theFile')">Click to See Effect</a>
+    <input type="file" id="theFile" />
+</head>
+
+<body>
+    <!-- BODY -->
+    <p id="popup"></p>
+    <div id="container"></div>
+</body>
+
+<script type="text/javascript">
+    var container
+    var gui, guiPrefs;
+    var pixCanvas,ctx;
+    var origPix; //to hold pixel data of original picture
+    var pix;
+    var img;
+    var vertices,verts; //to hold vertices and triangles of elaunay triangulation
+    var count;
+    var gui, guiPrefs;
+    var file;
+    
+    //Initialize
+    function init(){
+        pixCanvas = document.createElement('canvas');
+        setupGui();
+    }
+    //Function called when "Click to See Effect" link is clicked
+    function performClick(elemId) {
+        var elem = document.getElementById(elemId);
+        initCan(elem.value);
+    }
+    //Load the picture and enable the npr controls
+    function initCan(file){
+    	img = new Image();
+    	img.src = 'img/'+file;
+        img.onload = function() {
+                pixCanvas.width = img.width;
+                pixCanvas.height = img.height;
+                document.body.appendChild(pixCanvas);
+                ctx = pixCanvas.getContext('2d');
+                onNpr();
+        };
+    }
+    
+    //Set up variables for GUI controls
+    function getGuiPrefs(){
+        this.delaunNumVertices = 250;
+        this.delaunay = false;
+        this.distortionFactor = 10;
+        this.blur = false;
+        this.filterOil = 10;
+        this.oilPaint = false;
+        this.cartoon = false;
+        this.cartoonThreshold = 25;
+        this.voronoi = false;
+        this.voronoiBlockSize = 50;
+    }
+    // GUI -- sets up gui elements
+    function setupGui(){
+        gui = new dat.GUI();
+        guiPrefs = new getGuiPrefs();
+        gui.add(guiPrefs, 'delaunay').onFinishChange(onNpr);
+        gui.add(guiPrefs, 'delaunNumVertices', 200, 3000).onFinishChange(onNpr);
+        gui.add(guiPrefs, 'voronoi').onFinishChange(onNpr);
+        gui.add(guiPrefs, 'voronoiBlockSize', 10,100).onFinishChange(onNpr);
+        gui.add(guiPrefs, 'blur').onFinishChange(onNpr);
+        gui.add(guiPrefs, 'distortionFactor', 10, 100).onFinishChange(onNpr);
+        gui.add(guiPrefs, 'oilPaint').onFinishChange(onNpr);
+        gui.add(guiPrefs, 'filterOil', 2,10).onFinishChange(onNpr);
+        gui.add(guiPrefs, 'cartoon').onFinishChange(onNpr);
+        gui.add(guiPrefs, 'cartoonThreshold', 20,40).onFinishChange(onNpr);
+        gui.close();
+    }
+    
+    //Function that implements different npr techniques according to the gui options
+    function onNpr(){
+    	var x, y;
+        vertices = new Array(Math.floor(guiPrefs.delaunNumVertices));
+
+        for(var i = vertices.length; i--; ) {
+            x = Math.random() * 1.1 - 0.1;
+            y = Math.random() * 1.1 - 0.1;
+            x = x * pixCanvas.width + 5;
+            y = y * pixCanvas.height + 5;
+            vertices[i] = [x, y];
+        }
+        ctx.drawImage(img,0,0,pixCanvas.width,pixCanvas.height);
+        if(guiPrefs.delaunay && !guiPrefs.blur && !guiPrefs.oilPaint && !guiPrefs.cartoon && !guiPrefs.voronoi){
+        	delaunay(vertices);
+        	triangulateColor();
+        }
+        else if(guiPrefs.blur && !guiPrefs.delaunay && !guiPrefs.oilPaint && !guiPrefs.cartoon && !guiPrefs.voronoi){
+    		blur(guiPrefs.distortionFactor);
+    	}
+    	else if(!guiPrefs.blur && !guiPrefs.delaunay && guiPrefs.oilPaint && !guiPrefs.cartoon && !guiPrefs.voronoi){
+    		oilPaint(guiPrefs.filterOil,30);
+    	}
+    	else if(!guiPrefs.blur && !guiPrefs.delaunay && !guiPrefs.oilPaint && guiPrefs.cartoon && !guiPrefs.voronoi){
+    		cartoon(guiPrefs.filterOil,30,guiPrefs.cartoonThreshold);
+    	}
+    	else if(!guiPrefs.blur && !guiPrefs.delaunay && !guiPrefs.oilPaint && !guiPrefs.cartoon && guiPrefs.voronoi){
+    		voronoi(guiPrefs.voronoiBlockSize);
+    	}
+    	else if(!guiPrefs.delaunay && !guiPrefs.blur && !guiPrefs.oilPaint && !guiPrefs.cartoon && !guiPrefs.voronoi){
+                origPix = ctx.getImageData(0,0,pixCanvas.width,pixCanvas.height);
+    		ctx.putImageData(origPix, 0, 0);
+        }
+        
+    }
+    
+    //Calculates the circumcircle of the given triangle
+    function calculateCircumCircle(triangle){
+    	var x1 = triangle[0][0];
+	var x2 = triangle[1][0];
+	var x3 = triangle[2][0];
+	var y1 = triangle[0][1];
+	var y2 = triangle[1][1];
+	var y3 = triangle[2][1];
+	var x1py1 = x1*x1+y1*y1;
+	var x2py2 = x2*x2+y2*y2;
+	var x3py3 = x3*x3+y3*y3;
+	var a = x1*y2+x3*y1+x2*y3-x3*y2-x1*y3-x2*y1
+	var bx = -(y2*(x1py1)+y1*(x3py3)+y3*(x2py2)-y1*(x2py2)-y3*(x1py1)-y2*(x3py3));
+	var by = (x2*(x1py1)+x1*(x3py3)+x3*(x2py2)-x1*(x2py2)-x3*(x1py1)-x2*(x3py3));
+	var c = -(x2*y3*(x1py1)+x1*y2*(x3py3)+x3*y1*(x2py2)-x1*y3*(x2py2)-x3*y2*(x1py1)-x2*y1*(x3py3));
+	var xc = -bx/(2*a);
+	var yc = -by/(2*a);
+	var rc = Math.sqrt((bx*bx+by*by-4*a*c))/(2*Math.abs(a));
+	return [xc,yc,rc];
+    }
+    
+    //Delaunay Triangulation given a list of vertices.
+    //Output is a list of triangles which is held in verts.
+    function delaunay(vertices){
+    	//The variable verts will hold the final list of triangles.
+    	//calculate superTriangle
+    	verts = [];
+    	var circumList = [];
+    	var tempCircumList = [];
+    	var tempVerts = [];
+    	var tempEdgeBuff = [];
+    	var superTriangle = [];
+    	var edgeBuff = [];
+    	var polygon = [];
+    	var minx,miny,maxx,maxy,dx,dy,maxd,midx,midy;
+    	var x1,x2,x3,y1,y2,y3;
+    	var x1py1,x2py2,x3py3;
+    	var a,bx,by,c;
+    	var xc,yc,rc;
+    	var dist;
+    	var found;
+    	minx = pixCanvas.width+10;
+    	miny = pixCanvas.height+10;
+    	maxx = -10;
+    	maxy = -10;
+    	for(var i = 0; i<vertices.length; i++){
+    		if(vertices[i][0]<minx){
+    			minx = vertices[i][0];
+    		}
+    		if(vertices[i][0]>maxx){
+    			maxx = vertices[i][0];
+    		}
+    		if(vertices[i][1]<miny){
+    			miny = vertices[i][1];
+    		}
+    		if(vertices[i][1]>maxy){
+    			maxy = vertices[i][1];
+    		}
+    	}
+    	dx= maxx-minx;
+    	dy = maxy-miny;
+    	maxd = Math.max(dx,dy);
+    	midx = minx+dx*0.5;
+    	midy = miny+dy*0.5;
+    	superTriangle.push([[midx-20*maxd,midy-maxd],[midx,midy+20*maxd],[midx+20*maxd,midy-maxd]]); //the algorithm to calculate supertriangle was taken from github
+    	circumList.push(calculateCircumCircle(superTriangle[0]));
+    	verts.push(superTriangle[0]);
+    	//Step through each vertex.
+    	for(var i = 0; i<vertices.length; i++){
+    		tempVert = [];
+    		edgeBuff = [];
+    		removed = [];
+    		//For each triangle in the current triangle list
+    		//check if the vertex within the circumcircle of the triangle
+    		//if it is add it to the tempVerts list and the edges to the edgeBuff list 
+    		for(var j =0; j<verts.length; j++){
+    			var circum = circumList[j];
+    			xc = circum[0];
+    			yc = circum[1];
+    			rc = circum[2];
+    			dist = (vertices[i][0]-xc)*(vertices[i][0]-xc)+(vertices[i][1]-yc)*(vertices[i][1]-yc);
+    			if(dist<rc*rc){
+    				tempVerts.push(verts[j]);
+    				removed.push(j);
+    				edgeBuff.push([verts[j][0],verts[j][1]]);
+    				edgeBuff.push([verts[j][1],verts[j][2]]);
+    				edgeBuff.push([verts[j][2],verts[j][0]]);
+    			}
+    		}
+    		found = false;
+    		polygon = [];
+    		
+    		//Check for repition of edges add the non repeated edges to the polygon. These will be the relevant edges
+    		for(var j = 0; j<edgeBuff.length;j++){
+    			for(var k = 0; k<edgeBuff.length; k++){
+    				if(j!=k){
+					if((edgeBuff[j][0][0]==edgeBuff[k][0][0] && edgeBuff[j][0][1]==edgeBuff[k][0][1] && 
+						edgeBuff[j][1][0]==edgeBuff[k][1][0] && edgeBuff[j][1][1]==edgeBuff[k][1][1])||
+						(edgeBuff[j][0][0]==edgeBuff[k][1][0] && edgeBuff[j][0][1]==edgeBuff[k][1][1] && 
+						edgeBuff[j][1][0]==edgeBuff[k][0][0] && edgeBuff[j][1][1]==edgeBuff[k][0][1])){
+						found = true;
+					}
+				}
+    			}
+    			if(found==false){
+    				polygon.push(edgeBuff[j]);
+    			}
+    			else{
+    				found = false;
+    			}
+    		}
+    		//Remove all the triangles of the tempVerts list from the verts list.
+    		tempVerts= [];
+    		tempCircumList = [];
+    		var k =0;
+    		for(var j = 0; j<verts.length; j++){
+    			if(j!=removed[k]){
+    				tempVerts.push(verts[j]);
+    				tempCircumList.push(circumList[j]);
+    			}
+    			else{
+    				k++;
+    			}
+    		}
+    		verts = tempVerts.slice(0);
+    		circumList = tempCircumList.slice(0);
+    		//For each edge in polygon form a triangle with the edge and the vertext
+    		//and add it to the verts list
+    		for(var j =0; j<polygon.length; j++){
+    			verts.push([polygon[j][0],polygon[j][1],vertices[i]]);
+    			circumList.push(calculateCircumCircle([polygon[j][0],polygon[j][1],vertices[i]]));
+    		}
+    	}
+    	//Remove any triangles with supertriangle vertices from verts
+    	tempVerts = [];
+    	tempCircumList = [];
+    	found = false;
+    	for(var i =  0; i<verts.length; i++){
+    		for(var j = 0; j<3; j++){
+			for(var k = 0; k<3; k++){
+				if(verts[i][j][0]==superTriangle[0][k][0] && verts[i][j][1]==superTriangle[0][k][1]){
+					found = true;
+				}
+			}
+		}
+		if(found==false){
+			tempVerts.push(verts[i]);
+			tempCircumList.push(circumList[i]);
+		}
+		else{
+			found = false;
+		}
+    		
+    	}
+    	
+    	verts = tempVerts.slice(0);
+    	circumList = tempCircumList.slice(0);
+    }
+   
+    //Coloring smaller triangles accordingly after triangulation
+    function triangulateColor(){
+
+    	var midx, midy;
+    	var r, g, b,a;
+    	ctx.drawImage(img, 0, 0, pixCanvas.width, pixCanvas.height);
+    	pix = ctx.getImageData(0, 0, pixCanvas.width, pixCanvas.height);
+    	//alert(verts.length);
+    	for(var i = 0; i<verts.length;i++){
+    		//figuring out the color of an approximate midpoint of the triangle
+    		//this color is used to color all pixels inside the triangle
+    		midx = Math.floor((verts[i][0][0]+verts[i][2][0])/2);
+    		midy = Math.floor((verts[i][2][1]+verts[i][1][1])/2);
+    		//canvasColor = vidContext.getImageData(midx,midy, 1, 1).data;
+    		r = pix.data[((midy*pixCanvas.width+midx)*4)];
+    		g = pix.data[((midy*pixCanvas.width+midx)*4+1)];
+    		b = pix.data[((midy*pixCanvas.width+midx)*4+2)];
+    		a = pix.data[((midy*pixCanvas.width+midx)*4+3)];
+    		
+    		ctx.fillStyle = "rgba("+r+","+g+","+b+","+(a/255)+")";
+    		ctx.beginPath();
+    		ctx.moveTo(Math.floor(verts[i][0][0]),Math.floor(verts[i][0][1]));
+    		ctx.lineTo(Math.floor(verts[i][1][0]),Math.floor(verts[i][1][1]));
+    		ctx.lineTo(Math.floor(verts[i][2][0]),Math.floor(verts[i][2][1]));
+    		ctx.fill();
+    		
+    	}
+    }
+    //Function that implements oil painting technique. Increasing filter increases the
+    //oil paint effect. levels indicate the number of different intensities used.
+    function oilPaint(filter,levels){
+    	ctx.drawImage(img,0,0,pixCanvas.width,pixCanvas.height);
+    	pix = ctx.getImageData(0,0,pixCanvas.width,pixCanvas.height);
+    	var l = pix.data.length;
+    	var pix2Data = new Array(l);
+    	var r,g,b;
+    	var neighborList;
+    	var intensity;
+    	var maxIntensity, maxIndex;
+    	var intensityLevel = new Array(levels+1);
+    	var red = new Array(levels+1);
+    	var green = new Array(levels+1);
+    	var blue = new Array(levels+1);
+    	var temp;
+    	maxIntensity = 0;
+    	filterUsed = Math.floor(filter/2);
+    	for(var i = 0; i<l; i++){
+    		pix2Data[i] = pix.data[i];
+    	}
+    	for(var x = 0; x<pixCanvas.width; x++){
+    		for(var y = 0; y<pixCanvas.height; y++){
+    			maxIntensity = 0;
+    			maxIndex = 0;
+    			intensity =0;
+    			for(var k = 0; k<=levels; k++){
+    				intensityLevel[k] = 0;
+    				red[k] = 0;
+    				green[k] = 0;
+    				blue[k] = 0;
+    			}
+    			for(var i = x-filterUsed; i<=x+filterUsed; i++){
+    				for(var k = y-filterUsed; k<=y+filterUsed; k++){
+    					if((i>=0 && i<pixCanvas.width) && (k>=0 && k<pixCanvas.height)){
+    						r = pix2Data[(k*pixCanvas.width+i)*4+0];
+    						g = pix2Data[(k*pixCanvas.width+i)*4+1];
+    						b = pix2Data[(k*pixCanvas.width+i)*4+2];
+    						intensity = Math.floor(((r+g+b)/(3))%(levels+1));
+    						temp = intensityLevel[intensity+1];
+    						temp+=1;
+    						intensityLevel[intensity+1] = temp;
+    						red[intensity+1]+=r;
+    						green[intensity+1]+=g;
+    						blue[intensity+1]+=b;
+    						if(intensityLevel[intensity+1]>maxIntensity){
+    							maxIntensity = intensityLevel[intensity+1];
+    							maxIndex  = intensity+1;
+    						}
+    					}
+    				}
+    			}
+    			pix.data[(y*pixCanvas.width+x)*4+0] = (red[maxIndex]/maxIntensity);
+    			pix.data[(y*pixCanvas.width+x)*4+1] = (green[maxIndex]/maxIntensity);
+    			pix.data[(y*pixCanvas.width+x)*4+2] = (blue[maxIndex]/maxIntensity);
+    		}
+    	}
+    	ctx.putImageData(pix, 0, 0);
+    }
+    
+    //Helper function for cartoon npr technique.
+    //Used in gradient based edge detection method.
+    function ifGradientBelowThreshold(r1,g1,b1,r2,g2,b2,threshold){
+    	var gradient;
+    	gradient = Math.abs(r1-r2)+Math.abs(b1-b2)+Math.abs(g1-g2);
+    	if(gradient<=threshold){
+    		return true;
+    	}
+    	return false;
+    }
+    
+    //Function that implements oil painting technique. Increasing filter increases the
+    //oil paint effect. levels indicate the number of different intensities used.
+    //Decreasing threshold increases cartoon effect.
+    function cartoon(filter, levels, threshold){
+    	var r1,g1,b1,r2,g2,b2;
+    	oilPaint(filter, levels);
+    	ctx.drawImage(img,0,0,pixCanvas.width,pixCanvas.height);
+    	pix = ctx.getImageData(0,0,pixCanvas.width,pixCanvas.height);
+    	var l = pix.data.length;
+    	var pix2Data = new Array(l);
+    	for(var i = 0; i<l; i++){
+    		pix2Data[i] = pix.data[i];
+    	}
+    	for(var x = 0; x<pixCanvas.width; x++){
+    		for(var y = 0; y<pixCanvas.height; y++){
+    			//gradient based edge detection
+    			
+    			//horizontal gradient
+    			r1 = pix2Data[(y*pixCanvas.width+(x-1))*4+0];
+    			g1 = pix2Data[(y*pixCanvas.width+(x-1))*4+1];
+    			b1 = pix2Data[(y*pixCanvas.width+(x-1))*4+2];
+    			
+    			r2 = pix2Data[(y*pixCanvas.width+(x+1))*4+0];
+    			g2 = pix2Data[(y*pixCanvas.width+(x+1))*4+1];
+    			b2 = pix2Data[(y*pixCanvas.width+(x+1))*4+2];
+    			if (ifGradientBelowThreshold(r1,g1,b1,r2,g2,b2,threshold)==true){
+    				//vertical gradient
+    				r1 = pix2Data[((y-1)*pixCanvas.width+(x))*4+0];
+    				g1 = pix2Data[((y-1)*pixCanvas.width+(x))*4+1];
+    				b1 = pix2Data[((y-1)*pixCanvas.width+(x))*4+2];
+    			
+    				r2 = pix2Data[((y+1)*pixCanvas.width+(x))*4+0];
+    				g2 = pix2Data[((y+1)*pixCanvas.width+(x))*4+1];
+    				b2 = pix2Data[((y+1)*pixCanvas.width+(x))*4+2];
+    				
+    				if (ifGradientBelowThreshold(r1,g1,b1,r2,g2,b2,threshold)==true){
+    					//north-west south-east gradient
+    					r1 = pix2Data[((y-1)*pixCanvas.width+(x-1))*4+0];
+    					g1 = pix2Data[((y-1)*pixCanvas.width+(x-1))*4+1];
+    					b1 = pix2Data[((y-1)*pixCanvas.width+(x-1))*4+2];
+    			
+    					r2 = pix2Data[((y+1)*pixCanvas.width+(x+1))*4+0];
+    					g2 = pix2Data[((y+1)*pixCanvas.width+(x+1))*4+1];
+    					b2 = pix2Data[((y+1)*pixCanvas.width+(x+1))*4+2];
+    					
+    					if (ifGradientBelowThreshold(r1,g1,b1,r2,g2,b2,threshold)==true){
+    						//north-east south-west gradient
+    						r1 = pix2Data[((y-1)*pixCanvas.width+(x+1))*4+0];
+    						g1 = pix2Data[((y-1)*pixCanvas.width+(x+1))*4+1];
+    						b1 = pix2Data[((y-1)*pixCanvas.width+(x+1))*4+2];
+    			
+    						r2 = pix2Data[((y+1)*pixCanvas.width+(x-1))*4+0];
+    						g2 = pix2Data[((y+1)*pixCanvas.width+(x-1))*4+1];
+    						b2 = pix2Data[((y+1)*pixCanvas.width+(x-1))*4+2];
+    					}
+    				}
+    			}
+    			else{
+    				pix.data[(y*pixCanvas.width+x)*4+0] = 0;
+    				pix.data[(y*pixCanvas.width+x)*4+1] = 0;
+    				pix.data[(y*pixCanvas.width+x)*4+2] = 0;
+    			}
+    		}
+    	}
+    	ctx.putImageData(pix, 0, 0);
+    }
+    
+    //Implements blur npr technique
+    function blur(distortionFactor){
+    	var offsetx,offsety;
+    	var curx, cury;
+    	var r, g, b,a;
+    	ctx.drawImage(img, 0, 0);
+    	img.style.display = 'none';
+    	pix = ctx.getImageData(0, 0, pixCanvas.width, pixCanvas.height);
+    	var l = pix.data.length;
+    	var pix2Data = new Array(l);
+    	for(var i = 0; i<l; i++){
+    		pix2Data[i] = pix.data[i];
+    	}
+    	//Apply blur
+    	for(var x = 0; x<pixCanvas.width; x++){
+    		for(var y = 0; y<pixCanvas.height; y++){
+    			offsetx = Math.random()*2*distortionFactor - distortionFactor;
+    			offsety = Math.random()*2*distortionFactor - distortionFactor;
+    			curx = Math.floor(x+offsetx);
+    			cury = Math.floor(y+offsety);
+    			pix.data[(cury*pixCanvas.width+curx)*4]= pix2Data[(y*pixCanvas.width+x)*4];
+    			pix.data[(cury*pixCanvas.width+curx)*4+1]= pix2Data[(y*pixCanvas.width+x)*4+1];
+    			pix.data[(cury*pixCanvas.width+curx)*4+2]= pix2Data[(y*pixCanvas.width+x)*4+2];
+    			pix.data[(cury*pixCanvas.width+curx)*4+3]= pix2Data[(y*pixCanvas.width+x)*4+3];
+    		}
+    	}
+    	
+    	ctx.putImageData(pix, 0, 0);
+    }
+    
+    //Pixelates the picture according to the voronoi diagram. Block size determines
+    //the size of each pixel
+    function voronoi(blockSize){
+    	ctx.drawImage(img,0,0,pixCanvas.width,pixCanvas.height);
+    	pix = ctx.getImageData(0,0,pixCanvas.width,pixCanvas.height);
+    	var l = pix.data.length;
+    	var pix2Data = new Array(l);
+    	for(var i = 0; i<l; i++){
+    		pix2Data[i] = pix.data[i];
+    	}
+    	var pixelAssoc = new Array(l);
+    	var pixelBlock = new Array(l);
+    	var numOfBlocks = Math.floor((pixCanvas.width*pixCanvas.height)/(blockSize*blockSize));
+    	var randxy = [];
+    	var color = [];
+    	var i,j,x,y = 0;
+    	var randx, randy = 0;
+    	var count, totalPix;
+    	var r,g,b;
+    	var dist, mindist, mindist2;
+    	var midx, midy;
+    	var blockNo, usedBlock, numBlockPerRow;
+        
+        blockSize = Math.floor(blockSize);
+    	
+    	i = 0;
+    	j = 0;
+    	n = 0;
+    	x= 0;
+    	y =0;
+    	count = 0;
+    	totalPix = pixCanvas.width*pixCanvas.height;
+        
+    	//figuring out random xy points of square blocks and the mean colors of those blocks
+    	while(count<totalPix){
+    		r,g,b = 0;
+    		if(i+blockSize>=pixCanvas.width){
+                       
+    			for(x = i; x<pixCanvas.width; x++){
+    				for(y = j; y<j+blockSize; y++){
+    					count++;
+    					pixelBlock[(y*pixCanvas.width+x)*4+0] = n-1;
+    					pixelBlock[(y*pixCanvas.width+x)*4+1] = n-1;
+    					pixelBlock[(y*pixCanvas.width+x)*4+2] = n-1;
+    					pixelBlock[(y*pixCanvas.width+x)*4+3] = n-1;
+    				}
+    			}
+    			numBlockPerRow = n;
+    			i = 0;
+    			j = Math.floor(j+blockSize);
+    		}
+    		else if(j+blockSize>=pixCanvas.height){
+    			for(y = j; y<pixCanvas.height; y++){
+    				for(x =i; x<i+blockSize; x++){
+    					count++;
+    					pixelBlock[(y*pixCanvas.width+x)*4+0] = pixelBlock[((j-1)*pixCanvas.width+i)*4+0];
+    					pixelBlock[(y*pixCanvas.width+x)*4+1] = pixelBlock[((j-1)*pixCanvas.width+i)*4+1];
+    					pixelBlock[(y*pixCanvas.width+x)*4+2] = pixelBlock[((j-1)*pixCanvas.width+i)*4+2];
+    					pixelBlock[(y*pixCanvas.width+x)*4+3] = pixelBlock[((j-1)*pixCanvas.width+i)*4+3];
+    				}
+                        }
+    			i = Math.floor(i+blockSize);
+    		}
+    		else{
+			for(x= i; x<i+blockSize; x++){
+				for(y = j; y<j+blockSize; y++){
+					count++;
+					pixelBlock[(y*pixCanvas.width+x)*4+0] = n;
+					pixelBlock[(y*pixCanvas.width+x)*4+1] = n;
+					pixelBlock[(y*pixCanvas.width+x)*4+2] = n;
+					pixelBlock[(y*pixCanvas.width+x)*4+3] = n;
+                                        
+				}
+			}
+			
+			midx = Math.floor((i+i+blockSize)/2);
+			midy = Math.floor((j+j+blockSize)/2);
+			r = pix2Data[(midy*pixCanvas.width+midx)*4+0];
+			g = pix2Data[(midy*pixCanvas.width+midx)*4+1];
+			b = pix2Data[(midy*pixCanvas.width+midx)*4+2];
+			randx = Math.random()*(blockSize)+i;
+			randy = Math.random()*(blockSize)+j;
+			randxy.push([randx,randy]);
+			
+			color.push([r,g,b]);
+			i = (i+blockSize);
+			n++;
+    		}
+    		
+    	}
+    	numOfBlocks = n;
+    	mindist = pixCanvas.width*pixCanvas.height*pixCanvas.width*pixCanvas.height;
+    	
+    	//figuring out pixel association with blocks
+        var count = 0;
+    	for(var i =0; i<pixCanvas.width; i++){
+    		for(var j =0; j<pixCanvas.height; j++){
+    			blockNo = pixelBlock[(j*pixCanvas.width+i)*4];
+    			mindist2 = mindist;
+    			for(usedBlock = Math.floor(blockNo-numBlockPerRow/8); usedBlock<Math.floor(blockNo+numBlockPerRow/8); usedBlock++){
+    				if(usedBlock>=0 && usedBlock<numOfBlocks){
+					dist = Math.sqrt((i-randxy[usedBlock][0])*(i-randxy[usedBlock][0])+(j-randxy[usedBlock][1])*(j-randxy[usedBlock][1]));
+					
+                                        if(dist<mindist2){
+						mindist2 = dist;
+						pixelAssoc[(j*pixCanvas.width+i)*4] = usedBlock;
+						pixelAssoc[(j*pixCanvas.width+i)*4+1] = usedBlock;
+						pixelAssoc[(j*pixCanvas.width+i)*4+2] = usedBlock;
+						pixelAssoc[(j*pixCanvas.width+i)*4+3] = usedBlock;
+					}
+				}
+    			}
+    			usedBlock = blockNo;
+    		}
+    	}
+    	//setting pixel colors
+    	for(var i =0; i<l; i+=4){
+    		pix.data[i+0] = color[pixelAssoc[i]][0];
+    		pix.data[i+1] = color[pixelAssoc[i]][1];
+    		pix.data[i+2] = color[pixelAssoc[i]][2];
+    	}
+    	ctx.putImageData(pix, 0, 0);
+    	
+    }
+    // MAIN -- this runs first :)
+    function main(){
+        init();
+ 
+    }
+    // start here
+    main();
+
+    /** ** ** ** ** ** END SOURCE CODE ** ** ** ** ** **/
+</script>
+</html>
+
+
